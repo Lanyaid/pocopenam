@@ -24,8 +24,8 @@ else
 fi
 
 echo "[3/11] ⚠️ Vérification de conteneurs Kubernetes obsolètes..."
-old_containers=$(sudo crictl ps -a --runtime-endpoint unix:///var/run/containerd/containerd.sock --quiet | \
-  xargs -I {} sudo crictl inspect {} | \
+old_containers=$(sudo crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock ps -a --quiet | \
+  xargs -I {} sudo crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock inspect {} | \
   jq -r '.status | select(.labels."io.kubernetes.container.name" != null) | select(.createdAt | fromdateiso8601 < (now - 300)) | .id')
 
 if [ -n "$old_containers" ]; then
