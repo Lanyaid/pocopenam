@@ -20,11 +20,7 @@ sudo ip link delete cni0 2>/dev/null
 sudo ip link delete flannel.1 2>/dev/null
 
 echo "[6/7] 🗑️ Suppression des fichiers et répertoires de configuration..."
-sudo rm -rf /etc/kubernetes
-sudo rm -rf /etc/cni
-sudo rm -rf /var/lib/kubelet
-sudo rm -rf /var/lib/etcd
-sudo rm -rf /var/lib/cni
+sudo rm -rf /etc/kubernetes /etc/cni /var/lib/kubelet /var/lib/etcd /var/lib/cni
 rm -rf $HOME/.kube
 
 echo "[7/7] 🔁 Redémarrage des services containerd et kubelet..."
@@ -32,4 +28,3 @@ sudo systemctl restart containerd
 sudo systemctl restart kubelet
 
 echo "✅ Réinitialisation complète du cluster terminée. Environnement prêt pour une nouvelle installation."
-
