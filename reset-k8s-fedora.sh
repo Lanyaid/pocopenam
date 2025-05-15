@@ -1,56 +1,74 @@
 #!/bin/bash
 
-set -e
+#set -e
 
-echo "🛠️  Installation des dépendances..."
-sudo dnf install -y kubeadm kubelet kubectl containerd containernetworking-plugins iproute iptables
+echo "🔄 Réinitialisation complète de Kubernetes sur Fedora Server..."
 
-echo "🔧 Activation et démarrage des services..."
-sudo systemctl enable --now containerd
-sudo systemctl enable --now kubelet
-
-echo "🔍 Vérification du support cgroups..."
-CGROUP_DRIVER=$(crictl info | grep -i 'cgroupDriver' | awk -F\" '{print $4}')
-echo "ℹ️  cgroupDriver utilisé : $CGROUP_DRIVER"
-if [[ "$CGROUP_DRIVER" != "systemd" ]]; then
-  echo "⚠️  Le cgroupDriver n'est pas 'systemd'. Certaines fonctionnalités Kubernetes peuvent ne pas fonctionner correctement."
-fi
-
-echo "🔧 Vérification du swap..."
-if swapon --summary | grep -q 'partition'; then
-  echo "❌ Le swap est activé. Kubernetes nécessite sa désactivation."
-  read -p "Souhaitez-vous désactiver le swap maintenant ? [y/n] " -r
-  if [[ $REPLY =~ ^[Yy]$ ]]; then
-    sudo swapoff -a
-    sudo sed -i '/ swap / s/^/#/' /etc/fstab
-    echo "✅ Swap désactivé."
+# Étape 1 : Arrêt des conteneurs CRI (containerd)
+echo "[1/7] 🔨 Arrêt des conteneurs containerd..."
+if systemctl is-active --quiet containerd; then
+  CONTAINERS=$(sudo crictl ps -q)
+  if [ -n "$CONTAINERS" ]; then
+    echo "$CONTAINERS" | xargs -r sudo crictl stop
   else
-    echo "⚠️  Abandon de l'installation. Veuillez désactiver le swap manuellement et relancer ce script."
-    exit 1
+    echo "❕ Aucun conteneur en cours d'exécution."
   fi
 else
-  echo "✅ Le swap est déjà désactivé."
+  echo "❕ Le service containerd est arrêté, conteneurs déjà inactifs."
 fi
 
-echo "🧩 Initialisation de Kubernetes..."
-sudo kubeadm init --pod-network-cidr=10.244.0.0/16
+# Étape 2 : Suppression des conteneurs
+echo "[2/7] 🗑️ Suppression des conteneurs containerd..."
+CONTAINERS_ALL=$(sudo crictl ps -a -q)
+if [ -n "$CONTAINERS_ALL" ]; then
+  echo "$CONTAINERS_ALL" | xargs -r sudo crictl rm
+else
+  echo "❕ Aucun conteneur à supprimer."
+fi
 
-echo "🔐 Configuration de kubectl pour l'utilisateur $USER..."
-mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
+# Étape 3 : Démontage des volumes Kubernetes
+echo "[3/7] 🔌 Démontage des volumes Kubernetes..."
+MOUNTS=$(mount | grep '/var/lib/kubelet/pods/' | awk '{print $3}')
+if [ -n "$MOUNTS" ]; then
+  echo "$MOUNTS" | xargs -r sudo umount
+else
+  echo "❕ Aucun volume monté à démonter."
+fi
 
-echo "📦 Déploiement du réseau (Flannel)..."
-kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+# Étape 4 : Suppression des interfaces réseau
+echo "[4/7] 🧹 Suppression des interfaces réseau résiduelles..."
+INTERFACES=$(ip -o link show | awk -F': ' '{print $2}' | grep -E '^cni[0-9]+$|^flannel\.1$')
+if [ -n "$INTERFACES" ]; then
+  for iface in $INTERFACES; do
+    echo "🔌 Suppression de l'interface $iface..."
+    sudo ip link delete "$iface"
+  done
+else
+  echo "❕ Aucune interface réseau CNI/Flannel à supprimer."
+fi
 
-echo "🔧 Configuration de crictl pour utiliser containerd..."
-sudo mkdir -p /etc
-cat <<EOF | sudo tee /etc/crictl.yaml > /dev/null
-runtime-endpoint: unix:///run/containerd/containerd.sock
-timeout: 10
-debug: false
-EOF
-echo "✅ Fichier /etc/crictl.yaml créé avec succès."
+# Étape 5 : Suppression des fichiers
+echo "[5/7] 🗑️ Suppression des fichiers et répertoires de configuration..."
+sudo rm -rf /etc/cni/net.d /etc/kubernetes /var/lib/etcd \
+  /var/lib/kubelet /var/lib/cni /var/run/flannel /etc/containerd \
+  /opt/cni /etc/crictl.yaml $HOME/.kube/config
 
-echo "✅ Installation et configuration de Kubernetes terminées avec succès."
+# Étape 6 : Arrêt des services
+echo "[6/7] 🛑 Arrêt des services Kubernetes..."
+for svc in kubelet containerd; do
+  if systemctl is-active --quiet $svc; then
+    sudo systemctl stop $svc
+    echo "✔️ Service $svc arrêté."
+  else
+    echo "❕ Le service $svc est déjà arrêté."
+  fi
+done
 
+# Étape 7 : Nettoyage des règles iptables
+echo "[7/7] 🔥 Réinitialisation des règles iptables..."
+sudo iptables -F
+sudo iptables -t nat -F
+sudo iptables -t mangle -F
+sudo iptables -X
+
+echo "✅ Réinitialisation terminée. Prêt pour une nouvelle installation."
