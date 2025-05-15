@@ -1,57 +1,56 @@
 #!/bin/bash
-set -euo pipefail
 
-echo "[1/8] 🔨 Arrêt de tous les conteneurs containerd..."
-if systemctl is-active --quiet containerd; then
-    sudo crictl ps -a -q | xargs -r sudo crictl stop
-else
-    echo "❕ Le service containerd est inactif, tentative d'arrêt des conteneurs ignorée."
+set -e
+
+echo "🛠️  Installation des dépendances..."
+sudo dnf install -y kubeadm kubelet kubectl containerd containernetworking-plugins iproute iptables
+
+echo "🔧 Activation et démarrage des services..."
+sudo systemctl enable --now containerd
+sudo systemctl enable --now kubelet
+
+echo "🔍 Vérification du support cgroups..."
+CGROUP_DRIVER=$(crictl info | grep -i 'cgroupDriver' | awk -F\" '{print $4}')
+echo "ℹ️  cgroupDriver utilisé : $CGROUP_DRIVER"
+if [[ "$CGROUP_DRIVER" != "systemd" ]]; then
+  echo "⚠️  Le cgroupDriver n'est pas 'systemd'. Certaines fonctionnalités Kubernetes peuvent ne pas fonctionner correctement."
 fi
 
-echo "[2/8] 🗑️ Suppression de tous les conteneurs containerd..."
-if systemctl is-active --quiet containerd; then
-    sudo crictl ps -a -q | xargs -r sudo crictl rm
+echo "🔧 Vérification du swap..."
+if swapon --summary | grep -q 'partition'; then
+  echo "❌ Le swap est activé. Kubernetes nécessite sa désactivation."
+  read -p "Souhaitez-vous désactiver le swap maintenant ? [y/n] " -r
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    sudo swapoff -a
+    sudo sed -i '/ swap / s/^/#/' /etc/fstab
+    echo "✅ Swap désactivé."
+  else
+    echo "⚠️  Abandon de l'installation. Veuillez désactiver le swap manuellement et relancer ce script."
+    exit 1
+  fi
 else
-    echo "❕ Le service containerd est inactif, tentative de suppression des conteneurs ignorée."
+  echo "✅ Le swap est déjà désactivé."
 fi
 
-echo "[3/8] 🛑 Arrêt des services kubelet et containerd..."
-for svc in kubelet containerd; do
-    if systemctl is-active --quiet "$svc"; then
-        sudo systemctl stop "$svc"
-    else
-        echo "❕ Le service $svc est déjà arrêté."
-    fi
-done
+echo "🧩 Initialisation de Kubernetes..."
+sudo kubeadm init --pod-network-cidr=10.244.0.0/16
 
-echo "[4/8] 🔌 Démontage des volumes Kubernetes..."
-find /var/lib/kubelet/pods/ -name 'kube-api-access-*' -exec sudo umount -l {} \; 2>/dev/null || true
+echo "🔐 Configuration de kubectl pour l'utilisateur $USER..."
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-echo "[5/8] 🧹 Suppression des interfaces réseau résiduelles..."
-for iface in cni0 flannel.1; do
-    if ip link show "$iface" &>/dev/null; then
-        sudo ip link delete "$iface"
-    else
-        echo "❕ Interface réseau $iface introuvable."
-    fi
-done
+echo "📦 Déploiement du réseau (Flannel)..."
+kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
 
-echo "[6/8] 🗑️ Suppression des fichiers et répertoires de configuration..."
-sudo rm -rf /etc/cni /etc/kubernetes /var/lib/etcd /var/lib/cni /var/lib/kubelet /opt/cni /run/flannel
+echo "🔧 Configuration de crictl pour utiliser containerd..."
+sudo mkdir -p /etc
+cat <<EOF | sudo tee /etc/crictl.yaml > /dev/null
+runtime-endpoint: unix:///run/containerd/containerd.sock
+timeout: 10
+debug: false
+EOF
+echo "✅ Fichier /etc/crictl.yaml créé avec succès."
 
-echo "[7/8] 🔁 Redémarrage des services containerd et kubelet..."
-for svc in containerd kubelet; do
-    if ! systemctl is-active --quiet "$svc"; then
-        sudo systemctl start "$svc"
-    else
-        echo "❕ Le service $svc est déjà actif."
-    fi
-done
+echo "✅ Installation et configuration de Kubernetes terminées avec succès."
 
-echo "[8/8] 🔥 Réinitialisation des règles iptables..."
-sudo iptables -F
-sudo iptables -t nat -F
-sudo iptables -t mangle -F
-sudo iptables -X
-
-echo "✅ Réinitialisation complète du cluster terminée. Environnement prêt pour une nouvelle installation."

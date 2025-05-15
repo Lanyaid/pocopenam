@@ -1,75 +1,55 @@
 #!/bin/bash
 
-echo "[1/10] 📦 Installation de containerd (si nécessaire)..."
-sudo dnf install -y containerd jq
+set -e
 
-echo "[2/10] 🔍 Vérification de SystemdCgroup dans containerd..."
-if ! grep -q 'SystemdCgroup = true' /etc/containerd/config.toml 2>/dev/null; then
-  echo "❗ SystemdCgroup n'est pas activé dans containerd."
-  read -p "💬 Voulez-vous l'activer maintenant ? (y/n) : " fix_cgroup
-  if [[ "$fix_cgroup" == "y" || "$fix_cgroup" == "Y" ]]; then
-    echo "🔧 Ajout de SystemdCgroup = true dans /etc/containerd/config.toml..."
-    sudo sed -i '/\[plugins\."io.containerd.grpc.v1.cri"\.containerd\.runtimes\.runc\]/a\
-  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]\
-    SystemdCgroup = true' /etc/containerd/config.toml
-    echo "🔁 Redémarrage de containerd..."
-    sudo systemctl restart containerd
-    echo "✅ SystemdCgroup activé avec succès."
+echo "🛠️  Installation des dépendances..."
+sudo dnf install -y kubeadm kubelet kubectl containerd containernetworking-plugins iproute iptables
+
+echo "🔧 Activation et démarrage des services..."
+sudo systemctl enable --now containerd
+sudo systemctl enable --now kubelet
+
+echo "🔍 Vérification du support cgroups..."
+CGROUP_DRIVER=$(crictl info | grep -i 'cgroupDriver' | awk -F\" '{print $4}')
+echo "ℹ️  cgroupDriver utilisé : $CGROUP_DRIVER"
+if [[ "$CGROUP_DRIVER" != "systemd" ]]; then
+  echo "⚠️  Le cgroupDriver n'est pas 'systemd'. Certaines fonctionnalités Kubernetes peuvent ne pas fonctionner correctement."
+fi
+
+echo "🔧 Vérification du swap..."
+if swapon --summary | grep -q 'partition'; then
+  echo "❌ Le swap est activé. Kubernetes nécessite sa désactivation."
+  read -p "Souhaitez-vous désactiver le swap maintenant ? [y/n] " -r
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    sudo swapoff -a
+    sudo sed -i '/ swap / s/^/#/' /etc/fstab
+    echo "✅ Swap désactivé."
   else
-    echo "❌ Configuration requise non appliquée. Abandon."
+    echo "⚠️  Abandon de l'installation. Veuillez désactiver le swap manuellement et relancer ce script."
     exit 1
   fi
 else
-  echo "✅ SystemdCgroup est déjà configuré."
+  echo "✅ Le swap est déjà désactivé."
 fi
 
-echo "[3/10] 🧪 Vérification de conteneurs Kubernetes résiduels (anciens de +5 min)..."
-old_containers=$(sudo crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock ps -a --quiet | \
-  xargs -I {} sudo crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock inspect {} | \
-  jq -r '.status | select(.labels."io.kubernetes.container.name" != null) | select(.createdAt | fromdateiso8601 < (now - 300)) | .id')
-
-if [ -n "$old_containers" ]; then
-  echo "⚠️ Des conteneurs obsolètes sont présents."
-  echo "👉 Il est recommandé d'exécuter './reset-k8s-fedora.sh' avant de continuer."
-else
-  echo "✅ Aucun conteneur obsolète détecté."
-fi
-
-echo "[4/10] ⚙️ Configuration de containerd..."
-sudo mkdir -p /etc/containerd
-sudo containerd config default | sudo tee /etc/containerd/config.toml >/dev/null
-
-echo "[5/10] 🛠️ Activation du service kubelet..."
-sudo systemctl enable --now kubelet
-
-echo "[6/10] 🔁 Activation du routage IP..."
-echo "net.ipv4.ip_forward = 1" | sudo tee /etc/sysctl.d/99-kubernetes-ipforward.conf
-sudo sysctl --system
-
-echo "[7/10] ❌ Désactivation du swap..."
-sudo swapoff -a
-sudo sed -i '/swap/d' /etc/fstab
-
-echo "[8/10] 🔍 Vérification du swap..."
-if swapon --summary | grep -q .; then
-  echo "❌ Le swap est toujours actif. kubeadm init échouera."
-  exit 1
-else
-  echo "✅ Le swap est bien désactivé."
-fi
-
-echo "[9/10] 🔓 Ouverture des ports nécessaires dans firewalld..."
-sudo firewall-cmd --permanent --add-port=6443/tcp
-sudo firewall-cmd --permanent --add-port=10250/tcp
-sudo firewall-cmd --reload
-
-echo "[10/10] 🚀 Initialisation du cluster Kubernetes..."
+echo "🧩 Initialisation de Kubernetes..."
 sudo kubeadm init --pod-network-cidr=10.244.0.0/16
 
-echo "🧩 Configuration de kubectl pour l'utilisateur $(whoami)..."
+echo "🔐 Configuration de kubectl pour l'utilisateur $USER..."
 mkdir -p $HOME/.kube
 sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-echo "✅ Kubernetes est initialisé avec succès."
+echo "📦 Déploiement du réseau (Flannel)..."
+kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
 
+echo "🔧 Configuration de crictl pour utiliser containerd..."
+sudo mkdir -p /etc
+cat <<EOF | sudo tee /etc/crictl.yaml > /dev/null
+runtime-endpoint: unix:///run/containerd/containerd.sock
+timeout: 10
+debug: false
+EOF
+echo "✅ Fichier /etc/crictl.yaml créé avec succès."
+
+echo "✅ Installation et configuration de Kubernetes terminées avec succès."
