@@ -1,58 +1,77 @@
 #!/bin/bash
 
-echo "🛠️  Installation des dépendances..."
+echo "🔧 Initialisation complète de Kubernetes sur Fedora Server..."
+
+# Étape 1 : Installation des dépendances
+echo "[1/10] 🛠️  Installation des dépendances..."
 sudo dnf install -y \
-    kubernetes1.30-kubeadm \
-    kubernetes1.30 \
-    kubernetes1.30-client \
-    containerd \
-    containernetworking-plugins \
-    iproute \
-    iptables-legacy \
-    iptables-nft
+  kubernetes1.32-kubeadm \
+  kubernetes1.32 \
+  kubernetes1.32-client \
+  cri-o \
+  containernetworking-plugins \
+  iptables \
+  iproute-tc \
+  firewalld
 
-echo "🔧 Activation et démarrage des services..."
-sudo systemctl enable --now containerd
-sudo systemctl enable --now kubelet
+# Étape 2 : Configuration des paramètres système
+echo "[2/10] 🔧 Configuration des paramètres système..."
 
-echo "🔍 Vérification du support cgroups..."
-CGROUP_DRIVER=$(sudo crictl info | grep cgroupDriver | cut -d '"' -f4 || echo "")
-echo "ℹ️  cgroupDriver utilisé : $CGROUP_DRIVER"
-if [[ "$CGROUP_DRIVER" != "systemd" ]]; then
-  echo "⚠️  Le cgroupDriver n'est pas 'systemd'. Certaines fonctionnalités Kubernetes peuvent ne pas fonctionner correctement."
-fi
+sudo cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
 
-echo "🔧 Vérification du swap..."
-if swapon --summary | grep -q '^'; then
-  echo "❌ Le swap est activé. Kubernetes nécessite sa désactivation."
-  read -p "Souhaitez-vous désactiver le swap maintenant ? [y/n] " disable_swap
-  if [[ "$disable_swap" == "y" ]]; then
-    sudo swapoff -a
-    echo "✅ Swap désactivé."
-  else
-    echo "❗ Veuillez désactiver le swap manuellement avant de continuer."
-    exit 1
-  fi
-else
-  echo "✅ Le swap est déjà désactivé."
-fi
+sudo modprobe overlay
+sudo modprobe br_netfilter
 
-echo "🧩 Initialisation de Kubernetes..."
-sudo kubeadm init
+sudo cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables=1
+net.bridge.bridge-nf-call-ip6tables=1
+net.ipv4.ip_forward=1
+EOF
+sudo sysctl --system > /dev/null
 
-echo "🔐 Configuration de kubectl pour l'utilisateur $USER..."
+lsmod | grep br_netfilter
+lsmod | grep overlay
+
+# Étape 3 : Activation et démarrage des services
+echo "[3/10] 🔧 Activation et démarrage des services..."
+for svc in crio kubelet; do
+  sudo systemctl enable --now $svc
+done
+sleep 5
+
+# Étape 4 : Pull images
+echo "[4/10] 🔧 Pull des images nécessaires..."
+sudo kubeadm config images pull
+
+# Étape 5 : Initialisation du cluster
+echo "[5/10] 🧩 Initialisation du cluster..."
+sudo kubeadm init --pod-network-cidr=10.244.0.0/16
+
+# Étape 6 : Initialisation de Kubernetes
+echo "[6/10] 🧩 Initialisation de Kubernetes..."
 mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf "$HOME/.kube/config"
-sudo chown "$(id -u):$(id -g)" "$HOME/.kube/config"
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-echo "📦 Déploiement du réseau (Flannel)..."
+# Étape 7 : Configuration de kubectl
+echo "[7/10] 🔐 Configuration de kubectl pour l'utilisateur $USER..."
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+#Etape 8 Autoriser plane machine a lancer des pods pour applications
+echo "[8/10] 🔧 Autoriser plane machine à lancer despods pour applications..."
+kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+
+# Étape 9 : Déploiement de Flannel
+echo "[9/10] 📦 Déploiement du réseau (Flannel)..."
 kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
 
-echo "🔧 Configuration de crictl pour utiliser containerd..."
-sudo tee /etc/crictl.yaml > /dev/null <<EOF
-runtime-endpoint: unix:///run/containerd/containerd.sock
-image-endpoint: unix:///run/containerd/containerd.sock
-EOF
-echo "✅ Fichier /etc/crictl.yaml créé avec succès."
+# Étape 10 : Vérification des pods
+echo "[10/10]🔍 État des pods dans kube-system..."
+kubectl get pods --all-namespaces
 
 echo "✅ Installation et configuration de Kubernetes terminées avec succès."

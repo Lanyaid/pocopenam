@@ -1,7 +1,5 @@
 #!/bin/bash
 
-#set -e
-
 echo "🔄 Réinitialisation complète de Kubernetes sur Fedora Server..."
 
 # Étape 1 : Arrêt des conteneurs CRI (containerd)
@@ -21,7 +19,9 @@ fi
 echo "[2/7] 🗑️ Suppression des conteneurs containerd..."
 CONTAINERS_ALL=$(sudo crictl ps -a -q)
 if [ -n "$CONTAINERS_ALL" ]; then
-  echo "$CONTAINERS_ALL" | xargs -r sudo crictl rm
+  for c in $CONTAINERS_ALL; do
+    sudo crictl rm "$c" 2>/dev/null || echo "⚠️  Échec de la suppression du conteneur $c (déjà supprimé ou introuvable)."
+  done
 else
   echo "❕ Aucun conteneur à supprimer."
 fi
@@ -72,3 +72,4 @@ sudo iptables -t mangle -F
 sudo iptables -X
 
 echo "✅ Réinitialisation terminée. Prêt pour une nouvelle installation."
+
