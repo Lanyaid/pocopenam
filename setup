@@ -1,7 +1,7 @@
 kubectl apply -f openam-pv.yaml
-  289  kubectl apply -f openam-service.yaml
-  290  kubectl apply -f openam-statefulset.yaml
-  291  kubectl logs openam-0
-  292  kubectl describe pod openam-0
-  293  kubectl logs openam-0
-  294  kubectl port-forward pod/openam-0 8080:8080
+kubectl apply -f openam-service.yaml
+kubectl apply -f openam-statefulset.yaml
+kubectl logs openam-0
+kubectl describe pod openam-0
+kubectl logs openam-0
+kubectl port-forward pod/openam-0 8080:8080

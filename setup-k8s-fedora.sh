@@ -16,7 +16,6 @@ sudo dnf install -y \
 
 # Étape 2 : Configuration des paramètres système
 echo "[2/10] 🔧 Configuration des paramètres système..."
-
 sudo cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
 overlay
 br_netfilter
@@ -56,19 +55,21 @@ mkdir -p $HOME/.kube
 sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-# Étape 7 : Configuration de kubectl
-echo "[7/10] 🔐 Configuration de kubectl pour l'utilisateur $USER..."
-mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
-
 #Etape 8 Autoriser plane machine a lancer des pods pour applications
 echo "[8/10] 🔧 Autoriser plane machine à lancer despods pour applications..."
 kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 
 # Étape 9 : Déploiement de Flannel
 echo "[9/10] 📦 Déploiement du réseau (Flannel)..."
-kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+echo -e "\n\n\n"
+./deploy-network.sh
+echo -e "\n\n\n"
+
+# Étape 10 : Déploiement de OpenAM
+echo "[9/10] 📦 Déploiement du OpenAM..."
+echo -e "\n\n\n"
+./deploy-openam.sh
+echo -e "\n\n\n"
 
 # Étape 10 : Vérification des pods
 echo "[10/10]🔍 État des pods dans kube-system..."
