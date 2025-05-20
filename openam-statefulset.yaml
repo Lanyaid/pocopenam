@@ -16,50 +16,38 @@ spec:
         app: openam
     spec:
       containers:
-      - name: openam
-        image: openidentityplatform/openam
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 8080
-          protocol: TCP
-        - containerPort: 4444
-          protocol: TCP
-        - containerPort: 50389
-          protocol: TCP
-        env:
-          - name: CATALINA_OPTS
-            value: "-Xmx2048m -server -Dcom.iplanet.services.configpath=/home/openam/openam -Dcom.sun.identity.configuration.directory=/home/openam/openam"
-        livenessProbe:
-          failureThreshold: 3
-          httpGet:
-            path: /openam/isAlive.jsp
-            port: 8080
-            scheme: HTTP
-          initialDelaySeconds: 120
-          periodSeconds: 10
-          successThreshold: 1
-          timeoutSeconds: 3
-        readinessProbe:
-          failureThreshold: 3
-          httpGet:
-            path: /openam/isAlive.jsp
-            port: 8080
-            scheme: HTTP
-          initialDelaySeconds: 120
-          periodSeconds: 10
-          successThreshold: 1
-          timeoutSeconds: 3
-        resources: {}
-        terminationMessagePath: /dev/termination-log
-        terminationMessagePolicy: File
-        volumeMounts:
-        - name: openam-data
-          mountPath: /usr/openam/config
+        - name: openam
+          image: openidentityplatform/openam
+          ports:
+            - containerPort: 8080
+            - containerPort: 4444
+            - containerPort: 50389
+          env:
+            - name: CATALINA_OPTS
+              value: "-Xmx2048m -server -Dcom.iplanet.services.configpath=/home/openam/openam -Dcom.sun.identity.configuration.directory=/home/openam/openam"
+          livenessProbe:
+            httpGet:
+              path: /openam/isAlive.jsp
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /openam/isAlive.jsp
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 10
+            timeoutSeconds: 3
+          volumeMounts:
+            - name: openam-data
+              mountPath: /usr/openam/config
   volumeClaimTemplates:
-  - metadata:
-      name: openam-data
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      resources:
-        requests:
-          storage: 5Gi
+    - metadata:
+        name: openam-data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 5Gi
+        volumeName: openam-pv

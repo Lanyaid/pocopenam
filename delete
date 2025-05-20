@@ -1,0 +1,5 @@
+kubectl delete service openam
+  298  kubectl delete statefulset openam
+  299  kubectl delete pv openam-pv
+  300  kubectl delete pvc openam-data-openam-0
+  301  kubectl delete pv openam-pv
